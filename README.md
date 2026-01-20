@@ -1,4 +1,4 @@
-# 📺 psx noise generator
+# 🕹️ psx noise generator
 
 ## Implementation Notes
 
