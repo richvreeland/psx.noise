@@ -1,4 +1,4 @@
-# 🕹️ psx noise generator
+# 🕹️ psx noise
 
 Galois LFSR — a 16-bit PRNG white noise generator derived from the Sony Playstation's Sound Processing Unit.
 
