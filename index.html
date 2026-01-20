@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PSX Noise Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 p-8">
+  <div class="max-w-4xl mx-auto">
+    <div class="bg-black/40 backdrop-blur-lg rounded-2xl p-8 border border-purple-500/30 shadow-2xl">
+      <!-- Header -->
+      <div class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-pink-400 mb-2">
+          PSX Noise Generator
+        </h1>
+        <p class="text-purple-300 text-sm">
+          Galois LFSR White Noise • 16-bit Pseudorandom Generation
+        </p>
+      </div>
+
+      <!-- LFSR Visualization -->
+      <div class="bg-black/60 rounded-xl p-6 mb-6 border border-cyan-500/30">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-cyan-400 font-mono text-lg">LFSR State</h2>
+          <div class="text-right">
+            <div class="text-purple-300 text-sm">Hex: <span id="lfsr-hex">0x8000</span></div>
+            <div class="text-pink-300 text-sm">Dec: <span id="lfsr-dec">32768</span></div>
+          </div>
+        </div>
+        
+        <div id="lfsr-bits" class="font-mono text-sm flex gap-1 flex-wrap justify-center">
+          <!-- Bits will be inserted here -->
+        </div>
+        <div class="text-center mt-2 text-xs text-pink-400">
+          Pink outline = XOR tap bits (15, 12, 11, 10)
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="space-y-6 mb-8">
+        <!-- Step Control -->
+        <div class="bg-black/40 rounded-xl p-6 border border-purple-500/20">
+          <label class="block text-cyan-400 font-mono mb-3">
+            Step (Fine Frequency): <span id="step-value">0</span> → Decrement by <span id="step-decr">4</span>
+          </label>
+          <input
+            type="range"
+            id="step-slider"
+            min="0"
+            max="3"
+            value="0"
+            class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+          />
+          <div class="flex justify-between text-xs text-purple-300 mt-1">
+            <span>0 (decr: 4)</span>
+            <span>1 (decr: 5)</span>
+            <span>2 (decr: 6)</span>
+            <span>3 (decr: 7)</span>
+          </div>
+        </div>
+
+        <!-- Shift Control -->
+        <div class="bg-black/40 rounded-xl p-6 border border-purple-500/20">
+          <label class="block text-pink-400 font-mono mb-3">
+            Shift (Coarse Frequency): <span id="shift-value">8</span> → Period: <span id="shift-period">512</span>
+          </label>
+          <input
+            type="range"
+            id="shift-slider"
+            min="0"
+            max="15"
+            value="8"
+            class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
+          />
+          <div class="flex justify-between text-xs text-purple-300 mt-1">
+            <span>0</span>
+            <span>8</span>
+            <span>15</span>
+          </div>
+        </div>
+
+        <!-- Volume Control -->
+        <div class="bg-black/40 rounded-xl p-6 border border-purple-500/20">
+          <label class="block text-purple-400 font-mono mb-3">
+            Volume: <span id="volume-value">30</span>%
+          </label>
+          <input
+            type="range"
+            id="volume-slider"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.3"
+            class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+          />
+        </div>
+
+        <!-- Frequency Display -->
+        <div class="bg-gradient-to-r from-cyan-500/20 to-pink-500/20 rounded-xl p-4 border border-cyan-500/30">
+          <div class="text-center">
+            <div class="text-sm text-purple-300 mb-1">Approximate Output Frequency</div>
+            <div class="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-pink-400">
+              ~<span id="frequency">5,513</span> Hz
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Play Button -->
+      <button
+        id="play-button"
+        class="w-full py-4 rounded-xl font-bold text-lg transition-all bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+      >
+        ▶ Play
+      </button>
+
+      <!-- Export Button -->
+      <button
+        id="export-button"
+        class="w-full py-4 rounded-xl font-bold text-lg transition-all mt-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
+      >
+        💾 Export All Samples (64 WAVs)
+      </button>
+      
+      <!-- Progress Bar -->
+      <div id="progress-container" class="mt-4 bg-black/40 rounded-xl p-4 border border-green-500/30 hidden">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-green-400 text-sm">Generating samples...</span>
+          <span class="text-green-300 text-sm font-mono"><span id="progress-percent">0</span>%</span>
+        </div>
+        <div class="w-full bg-gray-700 rounded-full h-2">
+          <div 
+            id="progress-bar"
+            class="bg-gradient-to-r from-green-500 to-emerald-500 h-2 rounded-full transition-all duration-300"
+            style="width: 0%"
+          ></div>
+        </div>
+      </div>
+
+      <!-- Info -->
+      <div class="mt-8 p-4 bg-black/40 rounded-xl border border-purple-500/20">
+        <h3 class="text-cyan-400 font-mono text-sm mb-2">Implementation Notes:</h3>
+        <ul class="text-purple-300 text-xs space-y-1 list-disc list-inside">
+          <li>16-bit Galois LFSR with taps at bits 10, 11, 12, 15</li>
+          <li>Parity bit calculation: XOR(bit15, bit12, bit11, bit10) XOR 1</li>
+          <li>Timer decrements by (step + 4) at 44.1kHz sample rate</li>
+          <li>Timer resets to (0x20000 >> shift) when reaching 0</li>
+          <li>Shift changes reset timer immediately (FF7 compatibility)</li>
+          <li>Using ScriptProcessorNode for maximum browser compatibility</li>
+        </ul>
+        
+        <h3 class="text-green-400 font-mono text-sm mt-4 mb-2">Export Feature:</h3>
+        <ul class="text-purple-300 text-xs space-y-1 list-disc list-inside">
+          <li>Exports all 64 combinations (4 steps × 16 shifts)</li>
+          <li>Files trimmed to complete cycles for perfect seamless looping</li>
+          <li>Duration ~2 seconds (exact length varies to match cycle boundaries)</li>
+          <li>1+ second preroll removed to eliminate fade-in artifacts</li>
+          <li>44.1kHz sample rate, 16-bit mono WAV format</li>
+          <li>Files named by output frequency for easy sorting</li>
+          <li>Filename format: psx_noise_{freq}Hz.wav</li>
+          <li>Frequency range: ~67Hz to 15,750Hz</li>
+        </ul>
+        
+        <h3 class="text-yellow-400 font-mono text-sm mt-4 mb-2">Credits:</h3>
+        <p class="text-purple-300 text-xs">
+          Based on the PlayStation SPU noise generator implementation described in 
+          <a 
+            href="https://jsgroth.dev/blog/posts/ps1-spu-part-4/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            class="text-cyan-400 hover:text-cyan-300 underline"
+          >
+            "PlayStation: The SPU, Part 4 - Everything Else"
+          </a>
+          by jsgroth. Implementation details include the Galois LFSR algorithm, 
+          timer-based frequency control, and the FF7 compatibility fix for immediate 
+          timer resets on shift changes.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let isPlaying = false;
+    let step = 0;
+    let shift = 8;
+    let volume = 0.3;
+    let lfsr = 0x8000;
+    let isExporting = false;
+
+    // Audio
+    let audioContext = null;
+    let scriptNode = null;
+    let gainNode = null;
+    let animationFrame = null;
+
+    // Noise generator state
+    let noiseState = {
+      lfsr: 0x8000,
+      timer: 0,
+      step: 0,
+      shift: 8
+    };
+
+    // DOM elements
+    const playButton = document.getElementById('play-button');
+    const exportButton = document.getElementById('export-button');
+    const stepSlider = document.getElementById('step-slider');
+    const shiftSlider = document.getElementById('shift-slider');
+    const volumeSlider = document.getElementById('volume-slider');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    const progressPercent = document.getElementById('progress-percent');
+
+    // Initialize audio context
+    function initAudio() {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      audioContext = new AudioContext();
+      gainNode = audioContext.createGain();
+      gainNode.gain.value = volume;
+      gainNode.connect(audioContext.destination);
+      console.log('Audio context initialized:', audioContext.sampleRate, 'Hz');
+    }
+
+    // Calculate frequency
+    function calculateFrequency(stepVal, shiftVal) {
+      const timerPeriod = 0x20000 >> shiftVal;
+      const clocksPerSample = timerPeriod / (stepVal + 4);
+      return Math.round(44100 / clocksPerSample);
+    }
+
+    // Calculate samples per clock
+    function calculateSamplesPerClock(stepVal, shiftVal) {
+      const timerPeriod = 0x20000 >> shiftVal;
+      const decrement = stepVal + 4;
+      return timerPeriod / decrement;
+    }
+
+    // Update LFSR visualization
+    function updateLFSRDisplay() {
+      const lfsrBinary = lfsr.toString(2).padStart(16, '0');
+      const bitsContainer = document.getElementById('lfsr-bits');
+      bitsContainer.innerHTML = '';
+      
+      for (let i = 0; i < 16; i++) {
+        const bit = lfsrBinary[i];
+        const bitNum = 15 - i;
+        const isTapBit = [15, 12, 11, 10].includes(bitNum);
+        
+        const bitDiv = document.createElement('div');
+        bitDiv.className = `w-8 h-10 flex flex-col items-center justify-center rounded ${
+          bit === '1' ? 'bg-cyan-500' : 'bg-gray-700'
+        } ${isTapBit ? 'ring-2 ring-pink-500' : ''}`;
+        
+        bitDiv.innerHTML = `
+          <span class="${bit === '1' ? 'text-black font-bold' : 'text-gray-400'}">${bit}</span>
+          <span class="text-[10px] text-gray-400">${bitNum}</span>
+        `;
+        
+        bitsContainer.appendChild(bitDiv);
+      }
+      
+      document.getElementById('lfsr-hex').textContent = '0x' + lfsr.toString(16).toUpperCase().padStart(4, '0');
+      document.getElementById('lfsr-dec').textContent = lfsr;
+    }
+
+    // Update UI
+    function updateUI() {
+      const timerPeriod = 0x20000 >> shift;
+      const freq = calculateFrequency(step, shift);
+      
+      document.getElementById('step-value').textContent = step;
+      document.getElementById('step-decr').textContent = step + 4;
+      document.getElementById('shift-value').textContent = shift;
+      document.getElementById('shift-period').textContent = timerPeriod.toLocaleString();
+      document.getElementById('volume-value').textContent = Math.round(volume * 100);
+      document.getElementById('frequency').textContent = freq.toLocaleString();
+      updateLFSRDisplay();
+    }
+
+    // Start audio
+    function startAudio() {
+      if (!audioContext) initAudio();
+      
+      // Reset state
+      noiseState = {
+        lfsr: 0x8000,
+        timer: 0x20000 >> shift,
+        step: step,
+        shift: shift
+      };
+      
+      console.log('Starting audio with state:', noiseState);
+      
+      // Create script processor
+      const bufferSize = 4096;
+      scriptNode = audioContext.createScriptProcessor(bufferSize, 0, 1);
+      
+      let sampleCount = 0;
+      
+      scriptNode.onaudioprocess = (audioProcessingEvent) => {
+        const outputBuffer = audioProcessingEvent.outputBuffer;
+        const outputData = outputBuffer.getChannelData(0);
+        const state = noiseState;
+        
+        for (let i = 0; i < bufferSize; i++) {
+          // Decrement timer
+          state.timer -= (state.step + 4);
+          
+          // Check if we need to clock the LFSR
+          if (state.timer < 0) {
+            // Calculate parity
+            const parity = (((state.lfsr >> 15) & 1) ^
+                           ((state.lfsr >> 12) & 1) ^
+                           ((state.lfsr >> 11) & 1) ^
+                           ((state.lfsr >> 10) & 1) ^
+                           1);
+            
+            // Shift left and add parity
+            state.lfsr = ((state.lfsr << 1) | parity) & 0xFFFF;
+            
+            // Reset timer
+            while (state.timer < 0) {
+              state.timer += (0x20000 >> state.shift);
+            }
+          }
+          
+          // Convert LFSR to audio sample
+          let sample = state.lfsr;
+          if (sample >= 0x8000) {
+            sample = sample - 0x10000;
+          }
+          outputData[i] = sample / 32768.0;
+          
+          // Debug first few samples
+          if (sampleCount < 10) {
+            console.log(`Sample ${sampleCount}: LFSR=0x${state.lfsr.toString(16).padStart(4, '0')}, value=${sample}, normalized=${outputData[i].toFixed(4)}`);
+          }
+          sampleCount++;
+        }
+      };
+      
+      scriptNode.connect(gainNode);
+      console.log('Audio processing started');
+      
+      // Visual update loop
+      function updateVisual() {
+        if (!scriptNode) return;
+        lfsr = noiseState.lfsr;
+        updateLFSRDisplay();
+        animationFrame = requestAnimationFrame(updateVisual);
+      }
+      animationFrame = requestAnimationFrame(updateVisual);
+    }
+
+    // Stop audio
+    function stopAudio() {
+      if (scriptNode) {
+        scriptNode.disconnect();
+        scriptNode = null;
+      }
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      console.log('Audio stopped');
+    }
+
+    // Toggle playback
+    function togglePlayback() {
+      if (isPlaying) {
+        stopAudio();
+        isPlaying = false;
+        playButton.textContent = '▶ Play';
+        playButton.className = 'w-full py-4 rounded-xl font-bold text-lg transition-all bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transform hover:scale-[1.02]';
+      } else {
+        if (audioContext && audioContext.state === 'suspended') {
+          audioContext.resume().then(() => {
+            console.log('Audio context resumed:', audioContext.state);
+          });
+        }
+        
+        startAudio();
+        isPlaying = true;
+        playButton.textContent = '⏸ Stop';
+        playButton.className = 'w-full py-4 rounded-xl font-bold text-lg transition-all bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transform hover:scale-[1.02]';
+      }
+    }
+
+    // Generate noise samples
+    function generateNoiseSamples(stepVal, shiftVal, targetDurationSeconds, includePreroll = false) {
+      const sampleRate = 44100;
+      const samplesPerClock = calculateSamplesPerClock(stepVal, shiftVal);
+      
+      const prerollSeconds = Math.max(1.0, samplesPerClock * 10 / sampleRate);
+      
+      const targetSamples = Math.floor(sampleRate * targetDurationSeconds);
+      const cyclesNeeded = Math.floor(targetSamples / samplesPerClock);
+      const actualSamples = Math.floor(cyclesNeeded * samplesPerClock);
+      
+      const totalDuration = includePreroll ? (prerollSeconds + (actualSamples / sampleRate)) : (actualSamples / sampleRate);
+      const totalSamples = Math.floor(sampleRate * totalDuration);
+      const samples = new Float32Array(totalSamples);
+      
+      console.log(`  Samples per LFSR clock: ${samplesPerClock.toFixed(2)}`);
+      console.log(`  Preroll: ${prerollSeconds.toFixed(3)}s`);
+      console.log(`  Cycles in file: ${cyclesNeeded}, actual duration: ${(actualSamples/sampleRate).toFixed(3)}s`);
+      
+      const state = {
+        lfsr: 0x8000,
+        timer: 0x20000 >> shiftVal,
+        step: stepVal,
+        shift: shiftVal
+      };
+      
+      for (let i = 0; i < totalSamples; i++) {
+        state.timer -= (state.step + 4);
+        
+        if (state.timer < 0) {
+          const parity = (((state.lfsr >> 15) & 1) ^
+                         ((state.lfsr >> 12) & 1) ^
+                         ((state.lfsr >> 11) & 1) ^
+                         ((state.lfsr >> 10) & 1) ^
+                         1);
+          
+          state.lfsr = ((state.lfsr << 1) | parity) & 0xFFFF;
+          
+          while (state.timer < 0) {
+            state.timer += (0x20000 >> state.shift);
+          }
+        }
+        
+        let sample = state.lfsr;
+        if (sample >= 0x8000) {
+          sample = sample - 0x10000;
+        }
+        samples[i] = sample / 32768.0;
+      }
+      
+      if (includePreroll) {
+        const prerollSamples = Math.floor(sampleRate * prerollSeconds);
+        const trimPoint = Math.floor(prerollSamples / samplesPerClock) * samplesPerClock;
+        return samples.slice(trimPoint, trimPoint + actualSamples);
+      }
+      
+      return samples;
+    }
+
+    // Create WAV file
+    function createWavFile(samples, sampleRate = 44100) {
+      const numChannels = 1;
+      const bitsPerSample = 16;
+      const bytesPerSample = bitsPerSample / 8;
+      const blockAlign = numChannels * bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = samples.length * bytesPerSample;
+      const fileSize = 44 + dataSize;
+      
+      const buffer = new ArrayBuffer(fileSize);
+      const view = new DataView(buffer);
+      
+      const writeString = (offset, string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+      
+      writeString(0, 'RIFF');
+      view.setUint32(4, fileSize - 8, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitsPerSample, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataSize, true);
+      
+      let offset = 44;
+      for (let i = 0; i < samples.length; i++) {
+        const sample = Math.max(-1, Math.min(1, samples[i]));
+        const intSample = Math.floor(sample * 32767);
+        view.setInt16(offset, intSample, true);
+        offset += 2;
+      }
+      
+      return buffer;
+    }
+
+    // Export all samples
+    async function exportAllSamples() {
+      console.log('Export button clicked!');
+      isExporting = true;
+      progressContainer.classList.remove('hidden');
+      exportButton.disabled = true;
+      exportButton.classList.add('opacity-50', 'cursor-not-allowed');
+      
+      try {
+        console.log('JSZip loaded:', typeof JSZip);
+        
+        const zip = new JSZip();
+        console.log('JSZip instance created');
+        
+        const duration = 2;
+        const totalCombinations = 4 * 16;
+        let completed = 0;
+        
+        console.log('Starting export of', totalCombinations, 'files...');
+        
+        const batchSize = 4;
+        
+        for (let s = 0; s <= 3; s++) {
+          for (let sh = 0; sh <= 15; sh += batchSize) {
+            for (let b = 0; b < batchSize && (sh + b) <= 15; b++) {
+              const currentShift = sh + b;
+              
+              const freq = calculateFrequency(s, currentShift);
+              
+              console.log(`Generating step=${s}, shift=${currentShift}, freq=${freq}Hz...`);
+              const samples = generateNoiseSamples(s, currentShift, duration, true);
+              console.log(`Generated ${samples.length} samples`);
+              
+              const wavBuffer = createWavFile(samples);
+              console.log(`Created WAV buffer: ${wavBuffer.byteLength} bytes`);
+              
+              const filename = `psx_noise_${freq.toString().padStart(5, '0')}Hz.wav`;
+              
+              zip.file(filename, wavBuffer);
+              console.log(`Added ${filename} to ZIP`);
+              
+              completed++;
+            }
+            
+            const progress = Math.round((completed / totalCombinations) * 100);
+            console.log(`Progress: ${progress}% (${completed}/${totalCombinations})`);
+            progressPercent.textContent = progress;
+            progressBar.style.width = progress + '%';
+            
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        }
+        
+        progressPercent.textContent = '99';
+        progressBar.style.width = '99%';
+        console.log('All files added to ZIP. Generating blob...');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const zipBlob = await zip.generateAsync(
+          { type: 'blob' },
+          (metadata) => {
+            console.log(`ZIP compression progress: ${metadata.percent.toFixed(2)}%`);
+          }
+        );
+        
+        console.log('ZIP blob generated:', zipBlob.size, 'bytes');
+        progressPercent.textContent = '100';
+        progressBar.style.width = '100%';
+        
+        console.log('Creating download link...');
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'psx_noise_samples.zip';
+        document.body.appendChild(a);
+        console.log('Triggering download...');
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        console.log('Export complete!');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error('Export failed with error:', error);
+        console.error('Error stack:', error.stack);
+        alert('Export failed: ' + error.message + '\n\nCheck console for details.');
+      } finally {
+        console.log('Cleaning up export state...');
+        isExporting = false;
+        progressContainer.classList.add('hidden');
+        progressBar.style.width = '0%';
+        progressPercent.textContent = '0';
+        exportButton.disabled = false;
+        exportButton.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+    }
+
+    // Event listeners
+    playButton.addEventListener('click', togglePlayback);
+    exportButton.addEventListener('click', exportAllSamples);
+
+    stepSlider.addEventListener('input', (e) => {
+      step = parseInt(e.target.value);
+      if (noiseState) {
+        noiseState.step = step;
+      }
+      updateUI();
+    });
+
+    shiftSlider.addEventListener('input', (e) => {
+      shift = parseInt(e.target.value);
+      if (noiseState && noiseState.shift !== shift) {
+        noiseState.timer = 0x20000 >> shift;
+      }
+      if (noiseState) {
+        noiseState.shift = shift;
+      }
+      updateUI();
+    });
+
+    volumeSlider.addEventListener('input', (e) => {
+      volume = parseFloat(e.target.value);
+      if (gainNode) {
+        gainNode.gain.value = volume;
+      }
+      updateUI();
+    });
+
+    // Initialize
+    updateUI();
+  </script>
+</body>
+</html>
